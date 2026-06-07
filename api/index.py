@@ -1,55 +1,41 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import json
-import numpy as np
+from pydantic import BaseModel
+import json, os
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], expose_headers=["*"])
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
+with open(os.path.join(os.path.dirname(__file__), '..', 'q-vercel-latency.json')) as f:
+    data = json.load(f)
 
-# Load telemetry data
-with open("q-vercel-latency.json", "r") as f:
-    DATA = json.load(f)
+class Req(BaseModel):
+    regions: list
+    threshold_ms: float
 
-
-@app.get("/")
-async def root():
-    return {"status": "ok"}
-
-
-@app.post("/")
-async def analytics(payload: dict):
-
-    regions = payload["regions"]
-    threshold = payload["threshold_ms"]
-
-    result = {}
-
-    for region in regions:
-        rows = [r for r in DATA if r["region"] == region]
-
-        latencies = [r["latency_ms"] for r in rows]
+@app.post("/api/latency")
+def latency(req: Req):
+    result = []
+    for region in req.regions:
+        rows = [r for r in data if r["region"] == region]
+        latencies = sorted([r["latency_ms"] for r in rows])
         uptimes = [r["uptime_pct"] for r in rows]
+        n = len(latencies)
+        p95_pos = (n - 1) * 0.95
+        lower = int(p95_pos)
+        upper = lower + 1
+        frac = p95_pos - lower
+        if upper >= n:
+            p95 = latencies[lower]
+        else:
+            p95 = latencies[lower] + frac * (latencies[upper] - latencies[lower])
+        result.append({
+            "region": region,
+            "avg_latency": round(sum(latencies)/n, 2),
+            "p95_latency": round(p95, 2),
+            "avg_uptime": round(sum(uptimes)/n, 2),
+            "breaches": sum(1 for l in latencies if l > req.threshold_ms)
+        })
+    return {"regions": result}
 
-        result[region] = {
-            "avg_latency": round(float(np.mean(latencies)), 2),
-            "p95_latency": round(float(np.percentile(latencies, 95)), 2),
-            "avg_uptime": round(float(np.mean(uptimes)), 3),
-            "breaches": sum(
-                1 for r in rows
-                if r["latency_ms"] > threshold
-            )
-        }
-
-    return result
-
-
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    return {"status": "ok"}
+handler = app
