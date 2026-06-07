@@ -6,14 +6,17 @@ import numpy as np
 
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST"],
+    allow_credentials=False,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-with open("q-vercel-latency.json") as f:
+# Load data
+with open("q-vercel-latency.json", "r") as f:
     DATA = json.load(f)
 
 
@@ -43,3 +46,8 @@ async def analytics(payload: dict):
         }
 
     return result
+
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    return {}
